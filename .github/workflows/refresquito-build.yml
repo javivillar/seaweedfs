@@ -1,0 +1,32 @@
+name: refresquito-build
+
+on:
+  push:
+    branches: [refresquito-trusted-proxy-login]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.refresquito
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/seaweedfs:refresquito-trusted-proxy-login
+            ghcr.io/${{ github.repository_owner }}/seaweedfs:${{ github.sha }}
