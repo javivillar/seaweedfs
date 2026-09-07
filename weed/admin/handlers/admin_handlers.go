@@ -83,10 +83,16 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
 
 		protected := r.NewRoute().Subrouter()
+		// Refresquito addition: optional trusted-reverse-proxy auto-login,
+		// see dash.TrustedProxyAutoLogin's doc comment for the security
+		// model. Must run BEFORE RequireAuth so it can establish the
+		// session RequireAuth then finds already-authenticated.
+		protected.Use(dash.TrustedProxyAutoLogin(h.sessionStore))
 		protected.Use(dash.RequireAuth(h.sessionStore))
 		h.registerUIRoutes(protected)
 
 		api := r.PathPrefix("/api").Subrouter()
+		api.Use(dash.TrustedProxyAutoLogin(h.sessionStore))
 		api.Use(dash.RequireAuthAPI(h.sessionStore))
 		h.registerAPIRoutes(api, true)
 		return
