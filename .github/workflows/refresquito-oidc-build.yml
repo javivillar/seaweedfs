@@ -1,0 +1,39 @@
+name: refresquito-oidc-build
+
+# Separate from refresquito-build.yml on purpose: that workflow's tag
+# (refresquito-trusted-proxy-login) is what production actually runs, so
+# testing this still-unverified feature branch must never publish to it.
+# This workflow only triggers on this branch and only ever writes the
+# refresquito-oidc-admin-login tag (plus a per-commit sha tag), leaving the
+# production tag untouched.
+
+on:
+  push:
+    branches: [refresquito-oidc-admin-login]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.refresquito
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/seaweedfs:refresquito-oidc-admin-login
+            ghcr.io/${{ github.repository_owner }}/seaweedfs:${{ github.sha }}
