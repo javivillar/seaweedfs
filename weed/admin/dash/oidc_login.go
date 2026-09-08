@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,8 +13,10 @@ import (
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 // Native Admin UI OIDC login (Refresquito addition, Phase 1 of the planned
@@ -184,7 +187,7 @@ func oidcLoginError(w http.ResponseWriter, r *http.Request, logMsg string, err e
 
 // HandleOIDCStart begins the Authorization Code + PKCE flow, redirecting the
 // browser to the configured identity provider's own login page.
-func HandleOIDCStart(store sessions.Store) http.HandlerFunc {
+func (s *AdminServer) HandleOIDCStart(store sessions.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := loadOIDCLoginConfig()
 		if !cfg.configured() {
@@ -221,9 +224,10 @@ func HandleOIDCStart(store sessions.Store) http.HandlerFunc {
 // HandleOIDCCallback completes the flow: exchanges the authorization code,
 // verifies the returned ID token against weed/iam/oidc's production token
 // validator, maps the token's `groups` claim to an admin/readonly role using
-// the same convention as TrustedProxyAutoLogin, and establishes a native
+// the same convention as TrustedProxyAutoLogin, JIT-provisions a persisted
+// Identity for first-time logins (Phase 2), and establishes a native
 // session.
-func HandleOIDCCallback(store sessions.Store) http.HandlerFunc {
+func (s *AdminServer) HandleOIDCCallback(store sessions.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := loadOIDCLoginConfig()
 		if !cfg.configured() {
@@ -322,6 +326,18 @@ func HandleOIDCCallback(store sessions.Store) http.HandlerFunc {
 			return
 		}
 
+		// Phase 2: JIT-provision a persisted Identity for first-time logins, so
+		// this person shows up in Object Store -> Users exactly like a static
+		// access-key user and can be assigned to a Group from the Admin UI
+		// (Phase 3, already-working, zero code). Best-effort: a provisioning
+		// hiccup (e.g. a transient filer/grpc error) must not lock a
+		// group-authorized person out of the session Phase 1 already granted
+		// them -- it only means they won't appear in Users until the next
+		// successful login. `credentials` is deliberately left empty (verified
+		// legitimate in Phase 0) and `is_static` defaults to false, marking this
+		// as a federated-only identity distinct from the static config file.
+		s.jitProvisionOIDCUser(r.Context(), username)
+
 		for key := range session.Values {
 			delete(session.Values, key)
 		}
@@ -340,5 +356,34 @@ func HandleOIDCCallback(store sessions.Store) http.HandlerFunc {
 		}
 
 		http.Redirect(w, r, P(r.Context(), "/admin"), http.StatusSeeOther)
+	}
+}
+
+// jitProvisionOIDCUser ensures a persisted Identity exists for a
+// group-authorized OIDC login (Phase 2). GetUser-else-CreateUser, matching
+// the plan's exact shape: a federated-only Identity with zero Credentials
+// (Phase 0 confirmed the credential store's proto and CreateUser/GetUser
+// path both accept that -- no HMAC access-key/secret-key pair is created or
+// needed, this identity is only reachable by signing in through Keycloak).
+// Errors are logged, not surfaced -- see the call site's comment on why this
+// must stay best-effort.
+func (s *AdminServer) jitProvisionOIDCUser(ctx context.Context, username string) {
+	if s.credentialManager == nil {
+		glog.Warningf("OIDC login: credential manager not available, skipping JIT provisioning for %s", username)
+		return
+	}
+
+	if _, err := s.credentialManager.GetUser(ctx, username); err == nil {
+		// Already provisioned (either from a prior OIDC login, or a static/
+		// access-key user that happens to share this username) -- nothing to do.
+		return
+	} else if !errors.Is(err, credential.ErrUserNotFound) {
+		glog.Errorf("OIDC login: GetUser failed while checking JIT provisioning for %s: %v", username, err)
+		return
+	}
+
+	identity := &iam_pb.Identity{Name: username}
+	if err := s.credentialManager.CreateUser(ctx, identity); err != nil && !errors.Is(err, credential.ErrUserAlreadyExists) {
+		glog.Errorf("OIDC login: JIT provisioning (CreateUser) failed for %s: %v", username, err)
 	}
 }

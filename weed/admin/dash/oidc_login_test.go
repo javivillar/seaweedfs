@@ -8,6 +8,10 @@ import (
 	"net/url"
 	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory" // registers the "memory" store used by these tests
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 func withEnv(t *testing.T, kv map[string]string) {
@@ -236,4 +240,87 @@ func TestOAuthConfigForBuildsSaneAuthURL(t *testing.T) {
 	if q.Get("redirect_uri") != "http://admin.internal/login/oidc/callback" {
 		t.Errorf("redirect_uri = %q", q.Get("redirect_uri"))
 	}
+}
+
+// newTestAdminServerWithCredentialManager builds a bare AdminServer wired to
+// an isolated in-memory credential store, sufficient for exercising
+// jitProvisionOIDCUser without a real filer/grpc backend.
+func newTestAdminServerWithCredentialManager(t *testing.T) *AdminServer {
+	t.Helper()
+	cm, err := credential.NewCredentialManagerWithDefaults(credential.StoreTypeMemory)
+	if err != nil {
+		t.Fatalf("failed to create memory credential manager: %v", err)
+	}
+	return &AdminServer{credentialManager: cm}
+}
+
+func TestJITProvisionOIDCUserCreatesFederatedIdentity(t *testing.T) {
+	s := newTestAdminServerWithCredentialManager(t)
+	ctx := context.Background()
+
+	s.jitProvisionOIDCUser(ctx, "alice@example.com")
+
+	identity, err := s.credentialManager.GetUser(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("expected user to be provisioned, GetUser error = %v", err)
+	}
+	if identity.Name != "alice@example.com" {
+		t.Errorf("identity.Name = %q, want alice@example.com", identity.Name)
+	}
+	if len(identity.Credentials) != 0 {
+		t.Errorf("expected zero Credentials on a JIT-provisioned identity, got %d", len(identity.Credentials))
+	}
+	if identity.IsStatic {
+		t.Errorf("expected IsStatic=false on a JIT-provisioned identity")
+	}
+}
+
+func TestJITProvisionOIDCUserIdempotentOnRepeatedLogin(t *testing.T) {
+	s := newTestAdminServerWithCredentialManager(t)
+	ctx := context.Background()
+
+	s.jitProvisionOIDCUser(ctx, "bob@example.com")
+	s.jitProvisionOIDCUser(ctx, "bob@example.com") // second login, must not error/panic
+
+	identity, err := s.credentialManager.GetUser(ctx, "bob@example.com")
+	if err != nil {
+		t.Fatalf("GetUser after repeated provisioning error = %v", err)
+	}
+	if identity.Name != "bob@example.com" {
+		t.Errorf("identity.Name = %q, want bob@example.com", identity.Name)
+	}
+}
+
+func TestJITProvisionOIDCUserLeavesExistingUserUntouched(t *testing.T) {
+	s := newTestAdminServerWithCredentialManager(t)
+	ctx := context.Background()
+
+	// Pre-existing user with real access-key credentials and policies, as an
+	// admin might have created manually before this person's first OIDC login.
+	preexisting := &iam_pb.Identity{
+		Name:        "carol@example.com",
+		PolicyNames: []string{"S3ReadOnlyPolicy"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "AKIAEXISTING", SecretKey: "shh"}},
+	}
+	if err := s.credentialManager.CreateUser(ctx, preexisting); err != nil {
+		t.Fatalf("failed to seed pre-existing user: %v", err)
+	}
+
+	s.jitProvisionOIDCUser(ctx, "carol@example.com")
+
+	identity, err := s.credentialManager.GetUser(ctx, "carol@example.com")
+	if err != nil {
+		t.Fatalf("GetUser error = %v", err)
+	}
+	if len(identity.Credentials) != 1 || identity.Credentials[0].AccessKey != "AKIAEXISTING" {
+		t.Errorf("pre-existing credentials were disturbed: %+v", identity.Credentials)
+	}
+	if len(identity.PolicyNames) != 1 || identity.PolicyNames[0] != "S3ReadOnlyPolicy" {
+		t.Errorf("pre-existing policy names were disturbed: %+v", identity.PolicyNames)
+	}
+}
+
+func TestJITProvisionOIDCUserNilCredentialManagerDoesNotPanic(t *testing.T) {
+	s := &AdminServer{}
+	s.jitProvisionOIDCUser(context.Background(), "dave@example.com") // must not panic
 }
