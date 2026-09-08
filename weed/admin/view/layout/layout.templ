@@ -362,7 +362,7 @@ templ Layout(view ViewContext, content templ.Component) {
 </html>
 }
 
-templ LoginForm(title string, errorMessage string, csrfToken string) {
+templ LoginForm(title string, errorMessage string, csrfToken string, oidcLoginEnabled bool) {
 {{
   prefix := dash.URLPrefixFromContext(ctx)
 }}
@@ -421,6 +421,17 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
                                 <i class="fas fa-sign-in-alt me-2"></i>Sign In
                             </button>
                         </form>
+
+                        if oidcLoginEnabled {
+                            <div class="d-flex align-items-center my-3">
+                                <hr class="flex-grow-1">
+                                <span class="mx-2 text-muted small">or</span>
+                                <hr class="flex-grow-1">
+                            </div>
+                            <a href={ templ.SafeURL(prefix + "/login/oidc/start") } class="btn btn-outline-secondary w-100">
+                                <i class="fas fa-key me-2"></i>Sign in with Keycloak
+                            </a>
+                        }
                     </div>
                 </div>
             </div>
