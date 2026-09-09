@@ -167,7 +167,11 @@ const (
 const (
 	AmzIdentityId = "s3-identity-id"
 	AmzAccountId  = "s3-account-id"
-	AmzAuthType   = "s3-auth-type"
+	// AmzAccountName carries the authenticated identity's Account.DisplayName
+	// alongside AmzAccountId, so setObjectOwnerFromRequest can stamp a
+	// human-readable owner name (ExtAmzOwnerNameKey) without a second lookup.
+	AmzAccountName = "s3-account-name"
+	AmzAuthType    = "s3-auth-type"
 )
 
 func GetBucketAndObject(r *http.Request) (bucket, object string) {

@@ -1537,7 +1537,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	// each key via AuthorizeBatchDeleteKey.
 	if action == s3_constants.ACTION_WRITE && r.Method == http.MethodPost &&
 		object == "" && r.URL.Query().Has("delete") {
-		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+		setAmzAccountIdHeader(r, identity)
 		return identity, s3err.ErrNone, reqAuthType
 	}
 
@@ -1609,10 +1609,32 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		}
 	}
 
-	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+	setAmzAccountIdHeader(r, identity)
 
 	return identity, s3err.ErrNone, reqAuthType
 
+}
+
+// setAmzAccountIdHeader propagates the authenticated identity's account id
+// (and display name, Refresquito addition for object-ownership attribution)
+// onto the request as headers so downstream handlers (object PUT/ACL/bucket
+// handlers -- see s3_constants.AmzAccountId's other call sites) can
+// attribute ownership without re-deriving the identity themselves.
+//
+// Refresquito fix: identity.Account is nil for any identity that predates
+// object-ownership work (a static config-file identity with no email, or
+// one JIT-provisioned before Account became mandatory) -- three call sites
+// in this file used to dereference identity.Account.Id directly and would
+// nil-pointer-panic a real S3 request from such an identity. Centralizing
+// the guard here means any future call site gets it for free.
+func setAmzAccountIdHeader(r *http.Request, identity *Identity) {
+	if identity == nil || identity.Account == nil {
+		return
+	}
+	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+	if identity.Account.DisplayName != "" {
+		r.Header.Set(s3_constants.AmzAccountName, identity.Account.DisplayName)
+	}
 }
 
 // AuthSignatureOnly performs only signature verification without any authorization checks.
@@ -1628,10 +1650,7 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 		return identity, s3Err
 	}
 
-	// Set account ID header for downstream handlers
-	if identity != nil && identity.Account != nil {
-		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
-	}
+	setAmzAccountIdHeader(r, identity)
 
 	return identity, s3err.ErrNone
 }
