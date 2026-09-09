@@ -81,6 +81,12 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 		r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
 		r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
 		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
+		// Refresquito addition: native "Sign in with Keycloak" OIDC flow
+		// (Phase 1 of the planned native-OIDC-login feature, see
+		// dash.HandleOIDCStart/HandleOIDCCallback's doc comments). No-op
+		// redirects to /login with an error when not configured.
+		r.HandleFunc("/login/oidc/start", h.adminServer.HandleOIDCStart(h.sessionStore)).Methods(http.MethodGet)
+		r.HandleFunc("/login/oidc/callback", h.adminServer.HandleOIDCCallback(h.sessionStore)).Methods(http.MethodGet)
 
 		protected := r.NewRoute().Subrouter()
 		// Refresquito addition: optional trusted-reverse-proxy auto-login,

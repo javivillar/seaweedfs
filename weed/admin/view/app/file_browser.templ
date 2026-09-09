@@ -472,7 +472,14 @@ templ FileBrowser(data dash.FileBrowserData) {
 			'<tr><td style="width: 120px;"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
 			'<tr><td><strong>Full Path:</strong></td><td><code class="text-break">' + (data.full_path || 'N/A') + '</code></td></tr>' +
 			'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';
-		
+
+		if (data.owner_id) {
+			const ownerLabel = data.owner_name ? (escapeHtml(data.owner_name) + ' (' + escapeHtml(data.owner_id) + ')') : escapeHtml(data.owner_id);
+			html += '<tr><td><strong>Owner:</strong></td><td>' + ownerLabel + '</td></tr>';
+		} else {
+			html += '<tr><td><strong>Owner:</strong></td><td class="text-muted">Unknown (uploaded before ownership tracking)</td></tr>';
+		}
+
 		if (!data.is_directory) {
 			html += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +
 				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';

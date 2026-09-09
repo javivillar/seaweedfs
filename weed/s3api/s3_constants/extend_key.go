@@ -1,7 +1,14 @@
 package s3_constants
 
 const (
-	ExtAmzOwnerKey              = "Seaweed-X-Amz-Owner"
+	ExtAmzOwnerKey = "Seaweed-X-Amz-Owner"
+	// ExtAmzOwnerNameKey is the display name captured alongside ExtAmzOwnerKey
+	// at write time (Refresquito addition, object-ownership attribution). It
+	// is deliberately a snapshot, not a live lookup: if the owner's display
+	// name changes later, already-written entries keep showing the name as
+	// it was at upload time -- the same convention AWS S3 itself uses for
+	// the Owner element's DisplayName in ACL/list responses.
+	ExtAmzOwnerNameKey          = "Seaweed-X-Amz-Owner-Name"
 	ExtAmzAclKey                = "Seaweed-X-Amz-Acl"
 	ExtOwnershipKey             = "Seaweed-X-Amz-Ownership"
 	ExtVersioningKey            = "Seaweed-X-Amz-Versioning"

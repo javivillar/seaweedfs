@@ -49,6 +49,7 @@ type AdminData struct {
 // Object Store Users management structures
 type ObjectStoreUser struct {
 	Username    string   `json:"username"`
+	AccountId   string   `json:"account_id"` // stable id used for object/bucket ownership attribution; see iam_pb.Account
 	Email       string   `json:"email"`
 	AccessKey   string   `json:"access_key"`
 	SecretKey   string   `json:"secret_key"`
@@ -102,6 +103,7 @@ type UpdateAccessKeyStatusRequest struct {
 
 type UserDetails struct {
 	Username    string          `json:"username"`
+	AccountId   string          `json:"account_id"`
 	Email       string          `json:"email"`
 	Actions     []string        `json:"actions"`
 	PolicyNames []string        `json:"policy_names"`

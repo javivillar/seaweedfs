@@ -1174,12 +1174,13 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // When BucketOwnerEnforced (the modern AWS default), the bucket owner owns all objects.
 // Otherwise, the uploader's account ID is used (ObjectWriter mode).
 func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string, entry *filer_pb.Entry) {
-	var ownerId string
+	var ownerId, ownerName string
 
 	// Check if bucketRegistry is available
 	if s3a.bucketRegistry == nil {
 		// Fallback to uploader if registry unavailable
 		ownerId = r.Header.Get(s3_constants.AmzAccountId)
+		ownerName = r.Header.Get(s3_constants.AmzAccountName)
 		glog.V(2).Infof("setObjectOwnerFromRequest: bucketRegistry unavailable, fallback to uploader %s", ownerId)
 	} else {
 		// Check bucket ownership policy
@@ -1190,9 +1191,13 @@ func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string
 
 		if useBucketOwner {
 			ownerId = *bucketMetadata.Owner.ID
+			// No display name available from bucket metadata (only an id
+			// reference) -- ExtAmzOwnerNameKey is left unset in this branch,
+			// the id remains the source of truth.
 			glog.V(2).Infof("setObjectOwnerFromRequest: using bucket owner %s (BucketOwnerEnforced)", ownerId)
 		} else {
 			ownerId = r.Header.Get(s3_constants.AmzAccountId)
+			ownerName = r.Header.Get(s3_constants.AmzAccountName)
 			if errCode != s3err.ErrNone || bucketMetadata == nil {
 				glog.V(2).Infof("setObjectOwnerFromRequest: fallback to uploader %s", ownerId)
 			} else if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
@@ -1208,6 +1213,9 @@ func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string
 			entry.Extended = make(map[string][]byte)
 		}
 		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(ownerId)
+		if ownerName != "" {
+			entry.Extended[s3_constants.ExtAmzOwnerNameKey] = []byte(ownerName)
+		}
 	}
 }
 
