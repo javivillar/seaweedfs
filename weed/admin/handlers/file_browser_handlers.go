@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"google.golang.org/protobuf/proto"
@@ -199,6 +200,47 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 }
 
 // CreateFolder handles folder creation requests
+// resolveUploaderOwner resolves the current session's stable owner id and
+// display name for stamping on newly-created filer entries (Refresquito
+// addition, object-ownership attribution -- see
+// s3_constants.ExtAmzOwnerKey/ExtAmzOwnerNameKey, the same Extended keys the
+// S3 API's own setObjectOwnerFromRequest already writes on S3-uploaded
+// objects). Prefers the real, persisted Account on the matching
+// iam_pb.Identity (set by CreateObjectStoreUser / the native OIDC
+// JIT-provisioning, see weed/admin/dash/oidc_login.go); falls back to the
+// raw session username -- for identities that predate Account being
+// mandatory, or for the native WEED_ADMIN_USER/READONLY_USER login, which
+// isn't an iam_pb.Identity at all -- so an upload is never left with no
+// attribution at all.
+func (h *FileBrowserHandlers) resolveUploaderOwner(ctx context.Context) (ownerId, ownerName string) {
+	username := dash.UsernameFromContext(ctx)
+	if username == "" {
+		return "", ""
+	}
+	if cm := h.adminServer.GetCredentialManager(); cm != nil {
+		if identity, err := cm.GetUser(ctx, username); err == nil && identity.Account != nil {
+			return identity.Account.Id, identity.Account.DisplayName
+		}
+	}
+	return username, username
+}
+
+// stampOwner sets the owner id/name Extended attributes on an entry about to
+// be created, mirroring the S3 API's ExtAmzOwnerKey/ExtAmzOwnerNameKey
+// convention. A no-op when ownerId is empty (unauthenticated context).
+func stampOwner(entry *filer_pb.Entry, ownerId, ownerName string) {
+	if ownerId == "" {
+		return
+	}
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(ownerId)
+	if ownerName != "" {
+		entry.Extended[s3_constants.ExtAmzOwnerNameKey] = []byte(ownerName)
+	}
+}
+
 func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Path       string `json:"path" binding:"required"`
@@ -226,22 +268,26 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 	base := "/" + strings.TrimPrefix(request.Path, "/")
 	fullPath := path.Join(base, folderName)
 
+	ownerId, ownerName := h.resolveUploaderOwner(r.Context())
+	newFolderEntry := &filer_pb.Entry{
+		Name:        path.Base(fullPath),
+		IsDirectory: true,
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: uint32(0o755 | os.ModeDir), // Directory mode
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+			Crtime:   time.Now().Unix(),
+			Mtime:    time.Now().Unix(),
+			TtlSec:   0,
+		},
+	}
+	stampOwner(newFolderEntry, ownerId, ownerName)
+
 	// Create folder via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 			Directory: path.Dir(fullPath),
-			Entry: &filer_pb.Entry{
-				Name:        path.Base(fullPath),
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0o755 | os.ModeDir), // Directory mode
-					Uid:      filer_pb.OS_UID,
-					Gid:      filer_pb.OS_GID,
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					TtlSec:   0,
-				},
-			},
+			Entry:     newFolderEntry,
 		})
 		return err
 	})
@@ -278,6 +324,8 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 	var uploadResults []map[string]interface{}
 	var failedUploads []string
 
+	ownerId, ownerName := h.resolveUploaderOwner(r.Context())
+
 	// Process each uploaded file
 	for _, fileHeader := range files {
 		// Validate file name
@@ -298,7 +346,7 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Upload file to filer
-		err = h.uploadFileToFiler(r.Context(), fullPath, fileHeader)
+		err = h.uploadFileToFiler(r.Context(), fullPath, fileHeader, ownerId, ownerName)
 
 		if err != nil {
 			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
@@ -342,14 +390,14 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 // buffers the entire payload in memory. The caller passes the request
 // context so a client disconnect cancels the in-flight chunk uploads instead
 // of letting them run to completion against the volume servers.
-func (h *FileBrowserHandlers) uploadFileToFiler(ctx context.Context, filePath string, fileHeader *multipart.FileHeader) error {
+func (h *FileBrowserHandlers) uploadFileToFiler(ctx context.Context, filePath string, fileHeader *multipart.FileHeader, ownerId, ownerName string) error {
 	file, err := fileHeader.Open()
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
-	return h.uploadFileGrpc(ctx, filePath, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), file)
+	return h.uploadFileGrpc(ctx, filePath, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), file, ownerId, ownerName)
 }
 
 // validateAndCleanFilePath validates and cleans the file path to prevent path traversal
@@ -600,6 +648,17 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 				extended[key] = string(value)
 			}
 			properties["extended"] = extended
+
+			// Surface owner id/name as first-class fields (Refresquito
+			// addition, object-ownership attribution) so the UI can show a
+			// dedicated "Owner" row instead of making users find it in the
+			// raw extended-attributes dump.
+			if ownerId, ok := entry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
+				properties["owner_id"] = string(ownerId)
+			}
+			if ownerName, ok := entry.Extended[s3_constants.ExtAmzOwnerNameKey]; ok {
+				properties["owner_name"] = string(ownerName)
+			}
 		}
 
 		// Get chunk information for files

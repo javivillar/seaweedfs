@@ -103,7 +103,7 @@ func (h *FileBrowserHandlers) downloadFileGrpc(ctx context.Context, filePath str
 // uploadFileGrpc streams the upload to volumes in 8 MiB chunks via the shared
 // chunked-upload helper, then registers the entry over the filer gRPC service.
 // Content always lands in volumes, never inlined on the entry.
-func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath string, fileName string, mimeType string, reader io.Reader) error {
+func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath string, fileName string, mimeType string, reader io.Reader, ownerId, ownerName string) error {
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
 		return err
@@ -175,6 +175,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 		},
 	}
 	entry.Chunks = chunkResult.FileChunks
+	stampOwner(entry, ownerId, ownerName)
 
 	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
