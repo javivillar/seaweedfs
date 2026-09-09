@@ -55,6 +55,10 @@ func (h *FileBrowserHandlers) ShowFileBrowser(w http.ResponseWriter, r *http.Req
 	// Normalize Windows-style paths for consistency
 	path = util.CleanWindowsPath(path)
 
+	if !h.authorizeBucketAction(w, r, dash.ActionListBucket, path) {
+		return
+	}
+
 	// Get pagination parameters
 	lastFileName := r.URL.Query().Get("lastFileName")
 
@@ -108,6 +112,10 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !h.authorizeBucketAction(w, r, dash.ActionDeleteObject, request.Path) {
+		return
+	}
+
 	// Delete file via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
@@ -156,6 +164,14 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 
 	// Delete each file/folder
 	for _, p := range request.Paths {
+		username := dash.UsernameFromContext(r.Context())
+		role := dash.RoleFromContext(r.Context())
+		if !bucketIndexPath(p) && !h.adminServer.CanAccessPath(r.Context(), username, role, dash.ActionDeleteObject, p) {
+			failedCount++
+			errors = append(errors, fmt.Sprintf("%s: permission denied", p))
+			continue
+		}
+
 		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 				Directory:            path.Dir(p),
@@ -199,7 +215,6 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 	}
 }
 
-// CreateFolder handles folder creation requests
 // resolveUploaderOwner resolves the current session's stable owner id and
 // display name for stamping on newly-created filer entries (Refresquito
 // addition, object-ownership attribution -- see
@@ -223,6 +238,35 @@ func (h *FileBrowserHandlers) resolveUploaderOwner(ctx context.Context) (ownerId
 		}
 	}
 	return username, username
+}
+
+// bucketIndexPath reports whether filerPath is the bucket index itself
+// (root, or /buckets) rather than a path inside a specific bucket. Browsing
+// the index only reveals bucket NAMES, not any bucket's contents, so it is
+// left ungated -- authorizeBucketAction below only kicks in once a request
+// actually targets something under /buckets/<name>/...
+func bucketIndexPath(filerPath string) bool {
+	clean := path.Clean("/" + strings.TrimPrefix(filerPath, "/"))
+	return clean == "/" || clean == "/buckets"
+}
+
+// authorizeBucketAction is the shared gate for every File Browser handler
+// below (Refresquito addition -- see AUTHZ.md § seaweedfs-oneke #13 and
+// dash.CanAccessPath's doc comment for the full authorization model: admin
+// role bypasses, everyone else needs an explicit policy Allow for this
+// action+bucket). Writes the 403 response itself and returns false when
+// denied, so callers can just `if !h.authorizeBucketAction(...) { return }`.
+func (h *FileBrowserHandlers) authorizeBucketAction(w http.ResponseWriter, r *http.Request, action, filerPath string) bool {
+	if bucketIndexPath(filerPath) {
+		return true
+	}
+	username := dash.UsernameFromContext(r.Context())
+	role := dash.RoleFromContext(r.Context())
+	if h.adminServer.CanAccessPath(r.Context(), username, role, action, filerPath) {
+		return true
+	}
+	writeJSONError(w, http.StatusForbidden, "You do not have permission to access this bucket")
+	return false
 }
 
 // stampOwner sets the owner id/name Extended attributes on an entry about to
@@ -268,6 +312,10 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 	base := "/" + strings.TrimPrefix(request.Path, "/")
 	fullPath := path.Join(base, folderName)
 
+	if !h.authorizeBucketAction(w, r, dash.ActionPutObject, fullPath) {
+		return
+	}
+
 	ownerId, ownerName := h.resolveUploaderOwner(r.Context())
 	newFolderEntry := &filer_pb.Entry{
 		Name:        path.Base(fullPath),
@@ -305,6 +353,10 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 	currentPath := r.FormValue("path")
 	if currentPath == "" {
 		currentPath = "/"
+	}
+
+	if !h.authorizeBucketAction(w, r, dash.ActionPutObject, currentPath) {
+		return
 	}
 
 	// Parse multipart form
@@ -444,6 +496,9 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
+	if !h.authorizeBucketAction(w, r, dash.ActionGetObject, filePath) {
+		return
+	}
 	inline := r.URL.Query().Get("inline") == "true"
 	tracker := &responseWriteTracker{ResponseWriter: w}
 	if err := h.downloadFileGrpc(r.Context(), filePath, tracker, inline); err != nil {
@@ -484,6 +539,9 @@ func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
 	filePath := r.URL.Query().Get("path")
 	if filePath == "" {
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !h.authorizeBucketAction(w, r, dash.ActionGetObject, filePath) {
 		return
 	}
 
@@ -589,6 +647,9 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 	filePath := r.URL.Query().Get("path")
 	if filePath == "" {
 		writeJSONError(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !h.authorizeBucketAction(w, r, dash.ActionGetObject, filePath) {
 		return
 	}
 
@@ -705,6 +766,9 @@ func (h *FileBrowserHandlers) ExportMetadata(w http.ResponseWriter, r *http.Requ
 	cleanPath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !h.authorizeBucketAction(w, r, dash.ActionListBucket, cleanPath) {
 		return
 	}
 
