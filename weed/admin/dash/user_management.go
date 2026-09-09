@@ -35,13 +35,15 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 		PolicyNames: req.PolicyNames,
 	}
 
-	// Add account if email is provided
-	if req.Email != "" {
-		newIdentity.Account = &iam_pb.Account{
-			Id:           generateAccountId(),
-			DisplayName:  req.Username,
-			EmailAddress: req.Email,
-		}
+	// Refresquito addition: every identity gets a stable Account.Id at
+	// creation time, not only ones with an email -- this is what lets every
+	// upload (S3 API and the Admin UI's own File Browser) attribute
+	// ownership to a real, permanent ID (see setObjectOwnerFromRequest /
+	// uploadFileGrpc) instead of silently skipping identities without one.
+	newIdentity.Account = &iam_pb.Account{
+		Id:           generateAccountId(),
+		DisplayName:  req.Username,
+		EmailAddress: req.Email,
 	}
 
 	// Generate access key if requested
@@ -69,6 +71,7 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 	// Return created user
 	user := &ObjectStoreUser{
 		Username:    req.Username,
+		AccountId:   newIdentity.Account.Id,
 		Email:       req.Email,
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
@@ -114,14 +117,18 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		updatedIdentity.PolicyNames = req.PolicyNames
 	}
 
+	// Refresquito addition: lazily backfill a stable Account.Id for any
+	// identity that predates always-creating one in CreateObjectStoreUser --
+	// touching a user via Update is the natural point to fix that up.
+	if updatedIdentity.Account == nil {
+		updatedIdentity.Account = &iam_pb.Account{
+			Id:          generateAccountId(),
+			DisplayName: username,
+		}
+	}
+
 	// Update email if provided
 	if req.Email != "" {
-		if updatedIdentity.Account == nil {
-			updatedIdentity.Account = &iam_pb.Account{
-				Id:          generateAccountId(),
-				DisplayName: username,
-			}
-		}
 		updatedIdentity.Account.EmailAddress = req.Email
 	}
 
@@ -134,6 +141,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 	// Return updated user
 	user := &ObjectStoreUser{
 		Username:    username,
+		AccountId:   updatedIdentity.Account.Id,
 		Email:       req.Email,
 		Permissions: updatedIdentity.Actions,
 		PolicyNames: updatedIdentity.PolicyNames,
@@ -202,9 +210,10 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		details.PolicyNames = append(details.PolicyNames, inlinePolicyNames...)
 	}
 
-	// Set email from account if available
+	// Set email/account id from account if available
 	if identity.Account != nil {
 		details.Email = identity.Account.EmailAddress
+		details.AccountId = identity.Account.Id
 	}
 
 	// Look up groups the user belongs to

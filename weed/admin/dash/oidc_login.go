@@ -307,6 +307,11 @@ func (s *AdminServer) HandleOIDCCallback(store sessions.Store) http.HandlerFunc 
 		if username == "" {
 			username = claims.Subject
 		}
+		email, _ := claims.GetClaimString("email")
+		displayName, _ := claims.GetClaimString("name")
+		if displayName == "" {
+			displayName = username
+		}
 
 		groups, _ := claims.GetClaimStringSlice("groups")
 		var role string
@@ -336,7 +341,10 @@ func (s *AdminServer) HandleOIDCCallback(store sessions.Store) http.HandlerFunc 
 		// successful login. `credentials` is deliberately left empty (verified
 		// legitimate in Phase 0) and `is_static` defaults to false, marking this
 		// as a federated-only identity distinct from the static config file.
-		s.jitProvisionOIDCUser(r.Context(), username)
+		// Account.Id/DisplayName are set from the token's own claims so this
+		// identity, like every other one, has a stable id usable for object
+		// ownership attribution (see jitProvisionOIDCUser's doc comment).
+		s.jitProvisionOIDCUser(r.Context(), username, displayName, email)
 
 		for key := range session.Values {
 			delete(session.Values, key)
@@ -367,22 +375,40 @@ func (s *AdminServer) HandleOIDCCallback(store sessions.Store) http.HandlerFunc 
 // needed, this identity is only reachable by signing in through Keycloak).
 // Errors are logged, not surfaced -- see the call site's comment on why this
 // must stay best-effort.
-func (s *AdminServer) jitProvisionOIDCUser(ctx context.Context, username string) {
+//
+// Every identity this creates gets a stable Account.Id (Refresquito
+// addition, object-ownership work) -- displayName/email come from the OIDC
+// token's own `name`/`email` claims when present, falling back to the
+// username. This is what lets an uploaded file's owner be attributed to a
+// real, permanent id instead of silently having none (see
+// setObjectOwnerFromRequest / uploadFileGrpc).
+func (s *AdminServer) jitProvisionOIDCUser(ctx context.Context, username, displayName, email string) {
 	if s.credentialManager == nil {
 		glog.Warningf("OIDC login: credential manager not available, skipping JIT provisioning for %s", username)
 		return
 	}
 
-	if _, err := s.credentialManager.GetUser(ctx, username); err == nil {
+	if existing, err := s.credentialManager.GetUser(ctx, username); err == nil {
 		// Already provisioned (either from a prior OIDC login, or a static/
-		// access-key user that happens to share this username) -- nothing to do.
+		// access-key user that happens to share this username). Backfill an
+		// Account for identities JIT-provisioned before this field existed --
+		// best-effort, same as the rest of this function.
+		if existing.Account == nil {
+			existing.Account = &iam_pb.Account{Id: generateAccountId(), DisplayName: displayName, EmailAddress: email}
+			if err := s.credentialManager.UpdateUser(ctx, username, existing); err != nil {
+				glog.Errorf("OIDC login: failed to backfill Account for existing user %s: %v", username, err)
+			}
+		}
 		return
 	} else if !errors.Is(err, credential.ErrUserNotFound) {
 		glog.Errorf("OIDC login: GetUser failed while checking JIT provisioning for %s: %v", username, err)
 		return
 	}
 
-	identity := &iam_pb.Identity{Name: username}
+	identity := &iam_pb.Identity{
+		Name:    username,
+		Account: &iam_pb.Account{Id: generateAccountId(), DisplayName: displayName, EmailAddress: email},
+	}
 	if err := s.credentialManager.CreateUser(ctx, identity); err != nil && !errors.Is(err, credential.ErrUserAlreadyExists) {
 		glog.Errorf("OIDC login: JIT provisioning (CreateUser) failed for %s: %v", username, err)
 	}

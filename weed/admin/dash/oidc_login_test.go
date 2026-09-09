@@ -258,7 +258,7 @@ func TestJITProvisionOIDCUserCreatesFederatedIdentity(t *testing.T) {
 	s := newTestAdminServerWithCredentialManager(t)
 	ctx := context.Background()
 
-	s.jitProvisionOIDCUser(ctx, "alice@example.com")
+	s.jitProvisionOIDCUser(ctx, "alice@example.com", "Alice Example", "alice@example.com")
 
 	identity, err := s.credentialManager.GetUser(ctx, "alice@example.com")
 	if err != nil {
@@ -273,14 +273,23 @@ func TestJITProvisionOIDCUserCreatesFederatedIdentity(t *testing.T) {
 	if identity.IsStatic {
 		t.Errorf("expected IsStatic=false on a JIT-provisioned identity")
 	}
+	if identity.Account == nil || identity.Account.Id == "" {
+		t.Fatalf("expected a stable Account.Id to be assigned, got %+v", identity.Account)
+	}
+	if identity.Account.DisplayName != "Alice Example" {
+		t.Errorf("Account.DisplayName = %q, want Alice Example", identity.Account.DisplayName)
+	}
+	if identity.Account.EmailAddress != "alice@example.com" {
+		t.Errorf("Account.EmailAddress = %q, want alice@example.com", identity.Account.EmailAddress)
+	}
 }
 
 func TestJITProvisionOIDCUserIdempotentOnRepeatedLogin(t *testing.T) {
 	s := newTestAdminServerWithCredentialManager(t)
 	ctx := context.Background()
 
-	s.jitProvisionOIDCUser(ctx, "bob@example.com")
-	s.jitProvisionOIDCUser(ctx, "bob@example.com") // second login, must not error/panic
+	s.jitProvisionOIDCUser(ctx, "bob@example.com", "Bob Example", "bob@example.com")
+	s.jitProvisionOIDCUser(ctx, "bob@example.com", "Bob Example", "bob@example.com") // second login, must not error/panic
 
 	identity, err := s.credentialManager.GetUser(ctx, "bob@example.com")
 	if err != nil {
@@ -291,12 +300,35 @@ func TestJITProvisionOIDCUserIdempotentOnRepeatedLogin(t *testing.T) {
 	}
 }
 
-func TestJITProvisionOIDCUserLeavesExistingUserUntouched(t *testing.T) {
+func TestJITProvisionOIDCUserRepeatedLoginKeepsSameAccountId(t *testing.T) {
+	s := newTestAdminServerWithCredentialManager(t)
+	ctx := context.Background()
+
+	s.jitProvisionOIDCUser(ctx, "eve@example.com", "Eve Example", "eve@example.com")
+	first, err := s.credentialManager.GetUser(ctx, "eve@example.com")
+	if err != nil {
+		t.Fatalf("GetUser error = %v", err)
+	}
+	firstId := first.Account.Id
+
+	s.jitProvisionOIDCUser(ctx, "eve@example.com", "Eve Example", "eve@example.com")
+	second, err := s.credentialManager.GetUser(ctx, "eve@example.com")
+	if err != nil {
+		t.Fatalf("GetUser error = %v", err)
+	}
+	if second.Account.Id != firstId {
+		t.Errorf("Account.Id changed across logins: %q -> %q -- object-ownership stamps from earlier uploads would orphan", firstId, second.Account.Id)
+	}
+}
+
+func TestJITProvisionOIDCUserLeavesExistingUserCredentialsAndPoliciesUntouched(t *testing.T) {
 	s := newTestAdminServerWithCredentialManager(t)
 	ctx := context.Background()
 
 	// Pre-existing user with real access-key credentials and policies, as an
 	// admin might have created manually before this person's first OIDC login.
+	// No Account set, simulating an identity created before Account became
+	// mandatory -- this is also the backfill case exercised below.
 	preexisting := &iam_pb.Identity{
 		Name:        "carol@example.com",
 		PolicyNames: []string{"S3ReadOnlyPolicy"},
@@ -306,7 +338,7 @@ func TestJITProvisionOIDCUserLeavesExistingUserUntouched(t *testing.T) {
 		t.Fatalf("failed to seed pre-existing user: %v", err)
 	}
 
-	s.jitProvisionOIDCUser(ctx, "carol@example.com")
+	s.jitProvisionOIDCUser(ctx, "carol@example.com", "Carol Example", "carol@example.com")
 
 	identity, err := s.credentialManager.GetUser(ctx, "carol@example.com")
 	if err != nil {
@@ -318,9 +350,13 @@ func TestJITProvisionOIDCUserLeavesExistingUserUntouched(t *testing.T) {
 	if len(identity.PolicyNames) != 1 || identity.PolicyNames[0] != "S3ReadOnlyPolicy" {
 		t.Errorf("pre-existing policy names were disturbed: %+v", identity.PolicyNames)
 	}
+	// The backfill this function is also responsible for.
+	if identity.Account == nil || identity.Account.Id == "" {
+		t.Errorf("expected Account to be backfilled on an existing identity that predates it, got %+v", identity.Account)
+	}
 }
 
 func TestJITProvisionOIDCUserNilCredentialManagerDoesNotPanic(t *testing.T) {
 	s := &AdminServer{}
-	s.jitProvisionOIDCUser(context.Background(), "dave@example.com") // must not panic
+	s.jitProvisionOIDCUser(context.Background(), "dave@example.com", "Dave Example", "dave@example.com") // must not panic
 }

@@ -979,9 +979,10 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 			IsStatic:    identity.IsStatic,
 		}
 
-		// Set email from account if available
+		// Set email/account id from account if available
 		if identity.Account != nil {
 			user.Email = identity.Account.EmailAddress
+			user.AccountId = identity.Account.Id
 		}
 
 		// Get first access key for display
