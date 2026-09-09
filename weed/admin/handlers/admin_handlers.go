@@ -253,10 +253,20 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3TablesApi.Handle("/tags", wrapWrite(h.adminServer.UntagS3TablesResource)).Methods(http.MethodDelete)
 
 	filesApi := api.PathPrefix("/files").Subrouter()
-	filesApi.Handle("/delete", wrapWrite(h.fileBrowserHandlers.DeleteFile)).Methods(http.MethodDelete)
-	filesApi.Handle("/delete-multiple", wrapWrite(h.fileBrowserHandlers.DeleteMultipleFiles)).Methods(http.MethodDelete)
-	filesApi.Handle("/create-folder", wrapWrite(h.fileBrowserHandlers.CreateFolder)).Methods(http.MethodPost)
-	filesApi.Handle("/upload", wrapWrite(h.fileBrowserHandlers.UploadFile)).Methods(http.MethodPost)
+	// Refresquito change: these four used to be wrapWrite(...) (blanket
+	// role=="admin" required, see dash.RequireWriteAccess). That would
+	// short-circuit before ever reaching the handler body, so a non-admin
+	// granted per-bucket write access via an IAM policy (dash.CanAccessPath,
+	// see bucket_authz.go) could never actually use it -- the route-level
+	// gate always won first. Each handler now calls authorizeBucketAction
+	// itself, which reproduces the same "admin bypasses everything" behavior
+	// AND adds the new per-bucket exception for everyone else, so the
+	// route-level wrapper is redundant here (unlike the other wrapWrite
+	// routes in this file, which have no bucket concept and still need it).
+	filesApi.HandleFunc("/delete", h.fileBrowserHandlers.DeleteFile).Methods(http.MethodDelete)
+	filesApi.HandleFunc("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles).Methods(http.MethodDelete)
+	filesApi.HandleFunc("/create-folder", h.fileBrowserHandlers.CreateFolder).Methods(http.MethodPost)
+	filesApi.HandleFunc("/upload", h.fileBrowserHandlers.UploadFile).Methods(http.MethodPost)
 	filesApi.HandleFunc("/download", h.fileBrowserHandlers.DownloadFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
