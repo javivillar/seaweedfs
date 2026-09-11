@@ -336,6 +336,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		})
 	}
 
+	// Refresquito addition: restrict specific public hostnames to only the
+	// File Browser surface. See RestrictFileBrowserOnlyHosts's doc comment --
+	// no-op unless WEED_ADMIN_FILE_BROWSER_ONLY_HOSTS is set.
+	r.Use(dash.RestrictFileBrowserOnlyHosts())
+
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
 	if *options.dataDir != "" {
