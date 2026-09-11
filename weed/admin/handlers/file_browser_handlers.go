@@ -906,6 +906,14 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 
 		if !entry.IsDirectory {
 			properties["mime_type"] = dash.ResolveEntryMime(entry)
+
+			// version_number (Refresquito addition -- see
+			// dash/file_versioning.go): a simple incremental counter, easier
+			// for a person to reference than the opaque version ID shown in
+			// Version History. 1 for a file with no stored versions yet.
+			if versions, verr := dash.ListVersions(client, filePath); verr == nil {
+				properties["version_number"] = dash.CurrentVersionNumber(versions)
+			}
 		}
 
 		return nil

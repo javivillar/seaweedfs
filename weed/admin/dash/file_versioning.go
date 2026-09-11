@@ -64,10 +64,16 @@ func versionsDirPath(filerPath string) (dir, name, versionsDir string) {
 // VersionInfo describes one stored version of a File Browser object, newest
 // first.
 type VersionInfo struct {
-	VersionId string    `json:"version_id"`
-	Size      int64     `json:"size"`
-	ModTime   time.Time `json:"mod_time"`
-	OwnerName string    `json:"owner_name"`
+	VersionId string `json:"version_id"`
+	// VersionNumber is a simple incremental counter (1 = the oldest stored
+	// version), assigned by ListVersions in upload order -- easier for a
+	// person to reference than the opaque VersionId. The entry currently
+	// live at the object's path (not included in this list -- see
+	// ListVersions) is implicitly version len(versions)+1.
+	VersionNumber int       `json:"version_number"`
+	Size          int64     `json:"size"`
+	ModTime       time.Time `json:"mod_time"`
+	OwnerName     string    `json:"owner_name"`
 }
 
 // lookupCurrentEntry fetches the entry currently at filerPath, or nil (no
@@ -173,7 +179,21 @@ func ListVersions(client filer_pb.SeaweedFilerClient, filerPath string) ([]Versi
 	// unlike ModTime (Unix seconds), it stays correctly ordered even for
 	// versions created within the same second.
 	sort.Slice(versions, func(i, j int) bool { return versions[i].VersionId < versions[j].VersionId })
+
+	// Assign incremental numbers in upload order: oldest = 1. versions[0]
+	// is newest (just sorted above), so it gets the highest number.
+	for i := range versions {
+		versions[i].VersionNumber = len(versions) - i
+	}
 	return versions, nil
+}
+
+// CurrentVersionNumber returns the version number implied for the entry
+// currently live at the object's path, given its stored version history
+// (from ListVersions) -- always one more than the highest stored version
+// number.
+func CurrentVersionNumber(versions []VersionInfo) int {
+	return len(versions) + 1
 }
 
 // versionIdFromFileName extracts the version ID from a ".versions" entry's

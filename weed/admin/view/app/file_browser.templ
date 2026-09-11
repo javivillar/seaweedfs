@@ -514,6 +514,9 @@ templ FileBrowser(data dash.FileBrowserData) {
 		if (!data.is_directory) {
 			html += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +
 				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';
+			if (data.version_number) {
+				html += '<tr><td><strong>Version:</strong></td><td>' + data.version_number + '</td></tr>';
+			}
 		}
 		
 		html += '</table>' +
@@ -619,7 +622,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 
 			versions.forEach(v => {
 				html += '<tr>' +
-					'<td><code class="small">' + escapeHtml(v.version_id.substring(0, 12)) + '&hellip;</code></td>' +
+					'<td>v' + v.version_number + '</td>' +
 					'<td>' + formatBytes(v.size || 0) + '</td>' +
 					'<td>' + (v.mod_time ? new Date(v.mod_time).toLocaleString() : 'N/A') + '</td>' +
 					'<td>' + escapeHtml(v.owner_name || 'Unknown') + '</td>' +

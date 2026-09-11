@@ -143,6 +143,12 @@ func TestSnapshotCurrentVersionAndListVersions(t *testing.T) {
 	if versions[0].Size != 100 {
 		t.Errorf("Size = %d, want 100", versions[0].Size)
 	}
+	if versions[0].VersionNumber != 1 {
+		t.Errorf("VersionNumber = %d, want 1 (the only stored version so far)", versions[0].VersionNumber)
+	}
+	if got := CurrentVersionNumber(versions); got != 2 {
+		t.Errorf("CurrentVersionNumber = %d, want 2 (one stored version + the current one)", got)
+	}
 
 	// A second overwrite snapshots a second version; both show up, newest first.
 	client.put("/buckets/mybucket", fileEntry("foo.txt", 200))
@@ -159,6 +165,28 @@ func TestSnapshotCurrentVersionAndListVersions(t *testing.T) {
 	}
 	if versions[0].VersionId != secondVersionId {
 		t.Errorf("newest-first: versions[0] = %q, want the second snapshot %q", versions[0].VersionId, secondVersionId)
+	}
+	if versions[0].VersionNumber != 2 || versions[1].VersionNumber != 1 {
+		t.Errorf("VersionNumbers = [%d, %d], want [2, 1] (newest-first, oldest is 1)", versions[0].VersionNumber, versions[1].VersionNumber)
+	}
+	if got := CurrentVersionNumber(versions); got != 3 {
+		t.Errorf("CurrentVersionNumber = %d, want 3", got)
+	}
+}
+
+func TestListVersionsEmpty(t *testing.T) {
+	client := newFakeFilerClient()
+	client.put("/buckets/mybucket", fileEntry("nooverwrite.txt", 42))
+
+	versions, err := ListVersions(client, "/buckets/mybucket/nooverwrite.txt")
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 0 {
+		t.Fatalf("expected 0 versions for a file never overwritten, got %d", len(versions))
+	}
+	if got := CurrentVersionNumber(versions); got != 1 {
+		t.Errorf("CurrentVersionNumber = %d, want 1 for a file with no stored history", got)
 	}
 }
 

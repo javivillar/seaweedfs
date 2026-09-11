@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -96,6 +97,15 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 
 			entry := resp.Entry
 			if entry == nil {
+				continue
+			}
+
+			// Hide the ".versions" sibling directories file_versioning.go
+			// creates on overwrite (Refresquito addition) -- an
+			// implementation detail, not something a user should browse
+			// into directly. Version history is reachable via the file's
+			// own Properties panel instead.
+			if entry.IsDirectory && strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 				continue
 			}
 
