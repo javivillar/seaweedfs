@@ -70,14 +70,23 @@ templ Layout(view ViewContext, content templ.Component) {
         <!-- Header -->
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
             <div class="container-fluid">
-                <a class="navbar-brand fw-bold" href={ view.P("/admin") }>
-                    <i class="fas fa-server me-2"></i>
-                    SeaweedFS Admin
-                </a>
+                if view.FileBrowserOnly {
+                    <a class="navbar-brand fw-bold" href={ view.P("/files") }>
+                        <i class="fas fa-folder me-2"></i>
+                        SeaweedFS Files
+                    </a>
+                } else {
+                    <a class="navbar-brand fw-bold" href={ view.P("/admin") }>
+                        <i class="fas fa-server me-2"></i>
+                        SeaweedFS Admin
+                    </a>
+                }
 
-                <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation menu">
-                    <span class="navbar-toggler-icon"></span>
-                </button>
+                if !view.FileBrowserOnly {
+                    <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation menu">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+                }
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="User menu">
                     <i class="fas fa-user"></i>
                 </button>
@@ -101,6 +110,7 @@ templ Layout(view ViewContext, content templ.Component) {
 
         <div class="row g-0">
             <!-- Sidebar -->
+            if !view.FileBrowserOnly {
             <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse" id="sidebarMenu">
                 <div class="position-sticky pt-3">
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
@@ -322,13 +332,22 @@ templ Layout(view ViewContext, content templ.Component) {
 
             <!-- Sidebar backdrop for mobile -->
             <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+            }
 
             <!-- Main content -->
+            if view.FileBrowserOnly {
+            <main class="col-12 px-3 px-md-4">
+                <div class="pt-3">
+                    @content
+                </div>
+            </main>
+            } else {
             <main class="col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4">
                 <div class="pt-3">
                     @content
                 </div>
             </main>
+            }
         </div>
     </div>
 

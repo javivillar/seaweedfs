@@ -9,19 +9,21 @@ import (
 
 // ViewContext contains per-request metadata needed by layout templates.
 type ViewContext struct {
-	Request   *http.Request
-	Username  string
-	CSRFToken string
-	URLPrefix string
+	Request         *http.Request
+	Username        string
+	CSRFToken       string
+	URLPrefix       string
+	FileBrowserOnly bool
 }
 
 // NewViewContext builds a ViewContext from request metadata.
 func NewViewContext(r *http.Request, username, csrfToken string) ViewContext {
 	return ViewContext{
-		Request:   r,
-		Username:  username,
-		CSRFToken: csrfToken,
-		URLPrefix: dash.URLPrefixFromContext(r.Context()),
+		Request:         r,
+		Username:        username,
+		CSRFToken:       csrfToken,
+		URLPrefix:       dash.URLPrefixFromContext(r.Context()),
+		FileBrowserOnly: dash.IsFileBrowserOnlyHost(r),
 	}
 }
 

@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// IsFileBrowserOnlyHost reports whether the request's hostname is one of
+// WEED_ADMIN_FILE_BROWSER_ONLY_HOSTS -- the same check RestrictFileBrowserOnlyHosts
+// uses to gate routes, exposed so view templates can also adapt their chrome
+// (e.g. hide the full admin sidebar) for these hosts. Reads the env var fresh
+// on every call (cheap: a short comma-separated list) rather than caching it,
+// so tests can reconfigure it per case via t.Setenv.
+func IsFileBrowserOnlyHost(r *http.Request) bool {
+	hosts := parseFileBrowserOnlyHosts(os.Getenv("WEED_ADMIN_FILE_BROWSER_ONLY_HOSTS"))
+	_, restricted := hosts[effectiveHostname(r)]
+	return restricted
+}
+
 // RestrictFileBrowserOnlyHosts restricts specific public hostnames
 // (Refresquito addition) to ONLY the File Browser surface -- everything
 // else the Admin UI normally serves (the dashboard, cluster/storage/plugin
