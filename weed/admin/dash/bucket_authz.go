@@ -18,18 +18,19 @@ import (
 // one source of truth, regardless of whether someone reaches a bucket via
 // the S3 API or the Admin UI.
 const (
-	ActionListBucket   = "s3:ListBucket"
-	ActionGetObject    = "s3:GetObject"
-	ActionPutObject    = "s3:PutObject"
-	ActionDeleteObject = "s3:DeleteObject"
+	ActionListBucket       = "s3:ListBucket"
+	ActionGetObject        = "s3:GetObject"
+	ActionPutObject        = "s3:PutObject"
+	ActionDeleteObject     = "s3:DeleteObject"
+	ActionGetObjectVersion = "s3:GetObjectVersion"
 )
 
-// bucketAndKeyFromPath splits a File Browser path into its bucket and
+// BucketAndKeyFromPath splits a File Browser path into its bucket and
 // object key, for paths under /buckets/<name>/... (the filer convention S3
 // buckets already live under, per s3api_bucket_handlers.go). Paths outside
 // that prefix have no S3 resource, so ok is false -- CanAccessPath denies
 // non-admins on those since there's no policy vocabulary for them.
-func bucketAndKeyFromPath(filerPath string) (bucket, key string, ok bool) {
+func BucketAndKeyFromPath(filerPath string) (bucket, key string, ok bool) {
 	clean := path.Clean("/" + strings.TrimPrefix(filerPath, "/"))
 	const prefix = "/buckets/"
 	if !strings.HasPrefix(clean+"/", prefix) {
@@ -167,7 +168,7 @@ func (s *AdminServer) CanAccessPath(ctx context.Context, username, role, action,
 		return false
 	}
 
-	bucket, key, ok := bucketAndKeyFromPath(filerPath)
+	bucket, key, ok := BucketAndKeyFromPath(filerPath)
 	if !ok {
 		return false
 	}

@@ -116,6 +116,10 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !h.checkNotLockedOrRespond(w, r, request.Path) {
+		return
+	}
+
 	// Delete file via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
@@ -173,6 +177,9 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 		}
 
 		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			if err := dash.CheckNotLocked(client, p, role); err != nil {
+				return err
+			}
 			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 				Directory:            path.Dir(p),
 				Name:                 path.Base(p),
@@ -267,6 +274,134 @@ func (h *FileBrowserHandlers) authorizeBucketAction(w http.ResponseWriter, r *ht
 	}
 	writeJSONError(w, http.StatusForbidden, "You do not have permission to access this bucket")
 	return false
+}
+
+// checkNotLockedOrRespond writes a 403 and returns false if filerPath is
+// under an active Object Lock and the caller isn't admin; true otherwise.
+func (h *FileBrowserHandlers) checkNotLockedOrRespond(w http.ResponseWriter, r *http.Request, filerPath string) bool {
+	role := dash.RoleFromContext(r.Context())
+	var lockErr error
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		lockErr = dash.CheckNotLocked(client, filerPath, role)
+		return nil
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to check Object Lock status: "+err.Error())
+		return false
+	}
+	if lockErr != nil {
+		writeJSONError(w, http.StatusForbidden, lockErr.Error())
+		return false
+	}
+	return true
+}
+
+// checkVersioningAndLock blocks an overwrite/delete at filerPath if the
+// current entry there is under an active Object Lock (unless the caller is
+// admin), and, if the target bucket has versioning enabled, snapshots the
+// current entry into its .versions history first. Safe to call when there
+// is no current entry yet (first upload to that path).
+func (h *FileBrowserHandlers) checkVersioningAndLock(r *http.Request, filerPath string) error {
+	role := dash.RoleFromContext(r.Context())
+	bucket, _, hasBucket := dash.BucketAndKeyFromPath(filerPath)
+
+	return h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err := dash.CheckNotLocked(client, filerPath, role); err != nil {
+			return err
+		}
+		if !hasBucket {
+			return nil
+		}
+		versioned, err := dash.IsBucketVersioningEnabled(client, bucket)
+		if err != nil || !versioned {
+			return nil
+		}
+		_, err = dash.SnapshotCurrentVersion(client, filerPath)
+		return err
+	})
+}
+
+// applyGovernanceLock sets a GOVERNANCE-mode retention on the entry just
+// written at filerPath.
+func (h *FileBrowserHandlers) applyGovernanceLock(filerPath string, retainUntil time.Time) error {
+	return h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: path.Dir(filerPath),
+			Name:      path.Base(filerPath),
+		})
+		if err != nil {
+			return err
+		}
+		entry := lookupResp.Entry
+		dash.ApplyGovernanceLock(entry, retainUntil)
+		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+			Directory: path.Dir(filerPath),
+			Entry:     entry,
+		})
+		return err
+	})
+}
+
+// ListFileVersions returns the stored version history of a File Browser
+// object (Refresquito addition -- see dash/file_versioning.go).
+func (h *FileBrowserHandlers) ListFileVersions(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		writeJSONError(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !h.authorizeBucketAction(w, r, dash.ActionGetObjectVersion, filePath) {
+		return
+	}
+
+	var versions []dash.VersionInfo
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		var err error
+		versions, err = dash.ListVersions(client, filePath)
+		return err
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to list versions: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"versions": versions})
+}
+
+// RestoreFileVersion makes a stored version the current content at path
+// again (Refresquito addition -- see dash/file_versioning.go). Restoring is
+// a write, so it's gated the same as an upload: blocked if the current
+// entry is locked (unless admin).
+func (h *FileBrowserHandlers) RestoreFileVersion(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path      string `json:"path"`
+		VersionId string `json:"version_id"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(request.Path) == "" || strings.TrimSpace(request.VersionId) == "" {
+		writeJSONError(w, http.StatusBadRequest, "path and version_id are required")
+		return
+	}
+	if !h.authorizeBucketAction(w, r, dash.ActionPutObject, request.Path) {
+		return
+	}
+
+	role := dash.RoleFromContext(r.Context())
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err := dash.CheckNotLocked(client, request.Path, role); err != nil {
+			return err
+		}
+		return dash.RestoreVersion(client, request.Path, request.VersionId)
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to restore version: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Version restored successfully"})
 }
 
 // stampOwner sets the owner id/name Extended attributes on an entry about to
@@ -378,6 +513,19 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 
 	ownerId, ownerName := h.resolveUploaderOwner(r.Context())
 
+	// Optional Object Lock request for this upload (Refresquito addition):
+	// a checked "lock" field + a retain-until date, GOVERNANCE mode only for
+	// now (see dash.ApplyGovernanceLock).
+	governanceLock := r.FormValue("lock") == "governance"
+	var retainUntil time.Time
+	if governanceLock {
+		retainUntil, err = time.Parse("2006-01-02", r.FormValue("retain_until"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid retain_until date: "+err.Error())
+			return
+		}
+	}
+
 	// Process each uploaded file
 	for _, fileHeader := range files {
 		// Validate file name
@@ -397,18 +545,34 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 			fullPath = "/" + fullPath
 		}
 
+		// Block overwriting a locked file, and snapshot the current content
+		// as a version first if the bucket has versioning enabled
+		// (Refresquito addition -- see dash/file_versioning.go).
+		if err := h.checkVersioningAndLock(r, fullPath); err != nil {
+			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
+			continue
+		}
+
 		// Upload file to filer
 		err = h.uploadFileToFiler(r.Context(), fullPath, fileHeader, ownerId, ownerName)
 
 		if err != nil {
 			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
-		} else {
-			uploadResults = append(uploadResults, map[string]interface{}{
-				"name": fileName,
-				"size": fileHeader.Size,
-				"path": fullPath,
-			})
+			continue
 		}
+
+		if governanceLock {
+			if err := h.applyGovernanceLock(fullPath, retainUntil); err != nil {
+				failedUploads = append(failedUploads, fmt.Sprintf("%s: uploaded but failed to lock: %v", fileName, err))
+				continue
+			}
+		}
+
+		uploadResults = append(uploadResults, map[string]interface{}{
+			"name": fileName,
+			"size": fileHeader.Size,
+			"path": fullPath,
+		})
 	}
 
 	// Prepare response

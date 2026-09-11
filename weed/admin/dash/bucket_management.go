@@ -312,6 +312,82 @@ func (s *AdminServer) SetBucketOwner(bucketName string, owner string) error {
 	})
 }
 
+// UpdateBucketVersioningHandler toggles S3 object versioning on an
+// already-existing bucket (Refresquito addition -- file version
+// history/restore in the File Browser needs this; previously versioning
+// could only be set at bucket-creation time).
+func (s *AdminServer) UpdateBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	if req.Enabled == nil {
+		writeJSONError(w, http.StatusBadRequest, "enabled field is required")
+		return
+	}
+
+	if err := s.UpdateBucketVersioning(bucketName, *req.Enabled); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to update bucket versioning: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Bucket versioning updated successfully",
+		"bucket":  bucketName,
+		"enabled": *req.Enabled,
+	})
+}
+
+// UpdateBucketVersioning enables or disables versioning on an existing
+// bucket, mirroring SetBucketOwner's Lookup -> mutate Extended -> UpdateEntry
+// pattern. Reuses s3api.StoreVersioningInExtended, the same shared helper
+// bucket creation already uses, so the on-disk key stays identical either
+// way. Disabling versioning on a bucket that has Object Lock configured is
+// refused (matches the S3 API's own PutBucketVersioningHandler rule --
+// Object Lock requires versioning to stay enabled).
+func (s *AdminServer) UpdateBucketVersioning(bucketName string, enabled bool) error {
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
+		}
+
+		bucketEntry := lookupResp.Entry
+
+		if !enabled {
+			if _, hasConfig := s3api.LoadObjectLockConfigurationFromExtended(bucketEntry); hasConfig {
+				return fmt.Errorf("cannot suspend versioning: bucket has Object Lock configured, which requires versioning to remain enabled")
+			}
+		}
+
+		if err := s3api.StoreVersioningInExtended(bucketEntry, enabled); err != nil {
+			return fmt.Errorf("failed to store versioning configuration: %w", err)
+		}
+
+		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+			Directory: "/buckets",
+			Entry:     bucketEntry,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update bucket versioning: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // ListBucketsAPI returns the list of buckets as JSON
 func (s *AdminServer) ListBucketsAPI(w http.ResponseWriter, r *http.Request) {
 	buckets, err := s.GetS3Buckets()

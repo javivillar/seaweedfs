@@ -84,24 +84,24 @@ func TestIsValidVersionID(t *testing.T) {
 	}
 }
 
-// TestGenerateVersionIdFormats tests that generateVersionId produces correct format based on parameter
+// TestGenerateVersionIdFormats tests that GenerateVersionId produces correct format based on parameter
 func TestGenerateVersionIdFormats(t *testing.T) {
 	// Generate old format version ID
-	oldFormatId := generateVersionId(false)
+	oldFormatId := GenerateVersionId(false)
 	if len(oldFormatId) != 32 {
 		t.Errorf("old format version ID length = %d, want 32", len(oldFormatId))
 	}
 	if isNewFormatVersionId(oldFormatId) {
-		t.Errorf("generateVersionId(false) produced new format ID: %s", oldFormatId)
+		t.Errorf("GenerateVersionId(false) produced new format ID: %s", oldFormatId)
 	}
 
 	// Generate new format version ID
-	newFormatId := generateVersionId(true)
+	newFormatId := GenerateVersionId(true)
 	if len(newFormatId) != 32 {
 		t.Errorf("new format version ID length = %d, want 32", len(newFormatId))
 	}
 	if !isNewFormatVersionId(newFormatId) {
-		t.Errorf("generateVersionId(true) produced old format ID: %s", newFormatId)
+		t.Errorf("GenerateVersionId(true) produced old format ID: %s", newFormatId)
 	}
 }
 
@@ -110,8 +110,8 @@ func TestGetVersionTimestamp(t *testing.T) {
 	now := time.Now().UnixNano()
 
 	// Generate old and new format IDs
-	oldId := generateVersionId(false)
-	newId := generateVersionId(true)
+	oldId := GenerateVersionId(false)
+	newId := GenerateVersionId(true)
 
 	oldTs := getVersionTimestamp(oldId)
 	newTs := getVersionTimestamp(newId)
@@ -224,7 +224,7 @@ func TestCompareVersionIdsMixedFormats(t *testing.T) {
 
 // TestCompareVersionIdsNullHandling tests that null versions sort last
 func TestCompareVersionIdsNullHandling(t *testing.T) {
-	regular := generateVersionId(true)
+	regular := GenerateVersionId(true)
 
 	// null should sort after regular versions
 	if result := compareVersionIds("null", regular); result <= 0 {

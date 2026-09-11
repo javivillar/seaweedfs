@@ -1192,6 +1192,18 @@ async function submitUploadFile() {
     });
     formData.append('path', currentPath);
 
+    // Object Lock (Refresquito addition): GOVERNANCE mode only for now
+    const lockCheckbox = document.getElementById('uploadLockGovernance');
+    const retainUntilInput = document.getElementById('uploadRetainUntil');
+    if (lockCheckbox && lockCheckbox.checked) {
+        if (!retainUntilInput.value) {
+            showErrorMessage('Choose a retain-until date to lock this file');
+            return;
+        }
+        formData.append('lock', 'governance');
+        formData.append('retain_until', retainUntilInput.value);
+    }
+
     // Show progress bar and disable button
     const progressContainer = document.getElementById('uploadProgress');
     const progressBar = progressContainer.querySelector('.progress-bar');
@@ -1411,6 +1423,31 @@ async function deleteFile(filePath) {
     } catch (error) {
         console.error('Delete error:', error);
         showAlert('Failed to delete file', 'error');
+    }
+}
+
+// Restore a previous version of a file (Refresquito addition -- see
+// dash/file_versioning.go)
+async function restoreFileVersion(filePath, versionId) {
+    try {
+        const response = await fetch(basePath('/api/files/restore'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: filePath, version_id: versionId })
+        });
+
+        if (response.ok) {
+            showAlert(`Restored a previous version of "${filePath}"`, 'success');
+            window.location.reload();
+        } else {
+            const error = await response.json();
+            showAlert(`Failed to restore version: ${error.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Restore version error:', error);
+        showAlert('Failed to restore version', 'error');
     }
 }
 

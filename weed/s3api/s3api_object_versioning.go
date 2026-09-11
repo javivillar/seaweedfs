@@ -197,7 +197,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 
 	// Check if .versions directory exists to determine format
 	useInvertedFormat := s3a.getVersionIdFormat(bucket, cleanObject)
-	versionId := generateVersionId(useInvertedFormat)
+	versionId := GenerateVersionId(useInvertedFormat)
 
 	glog.V(2).Infof("createDeleteMarker: creating delete marker %s for %s/%s (inverted=%v)", versionId, bucket, object, useInvertedFormat)
 

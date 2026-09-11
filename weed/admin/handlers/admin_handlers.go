@@ -191,6 +191,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3Api.HandleFunc("/buckets/{bucket}", h.adminServer.ShowBucketDetails).Methods(http.MethodGet)
 	s3Api.Handle("/buckets/{bucket}/quota", wrapWrite(h.adminServer.UpdateBucketQuota)).Methods(http.MethodPut)
 	s3Api.Handle("/buckets/{bucket}/owner", wrapWrite(h.adminServer.UpdateBucketOwner)).Methods(http.MethodPut)
+	s3Api.Handle("/buckets/{bucket}/versioning", wrapWrite(h.adminServer.UpdateBucketVersioningHandler)).Methods(http.MethodPut)
 
 	usersApi := api.PathPrefix("/users").Subrouter()
 	usersApi.HandleFunc("", h.userHandlers.GetUsers).Methods(http.MethodGet)
@@ -271,6 +272,8 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
 	filesApi.HandleFunc("/metadata", h.fileBrowserHandlers.ExportMetadata).Methods(http.MethodGet)
+	filesApi.HandleFunc("/versions", h.fileBrowserHandlers.ListFileVersions).Methods(http.MethodGet)
+	filesApi.HandleFunc("/restore", h.fileBrowserHandlers.RestoreFileVersion).Methods(http.MethodPost)
 
 	volumeApi := api.PathPrefix("/volumes").Subrouter()
 	volumeApi.HandleFunc("/export", h.clusterHandlers.ExportClusterVolumes).Methods(http.MethodGet)

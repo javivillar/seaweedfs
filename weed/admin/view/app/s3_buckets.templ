@@ -205,12 +205,15 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                     <span class="badge bg-success">
                                                         <i class="fas fa-check me-1"></i>Enabled
                                                     </span>
+                                                    <button type="button" class="btn btn-link btn-sm p-0 ms-1 versioning-toggle-btn" data-bucket-name={bucket.Name} data-enable="false" title="Suspend versioning">Suspend</button>
                                                 } else if bucket.VersioningStatus == "Suspended" {
                                                     <span class="badge bg-warning">
                                                         <i class="fas fa-pause me-1"></i>Suspended
                                                     </span>
+                                                    <button type="button" class="btn btn-link btn-sm p-0 ms-1 versioning-toggle-btn" data-bucket-name={bucket.Name} data-enable="true" title="Re-enable versioning">Enable</button>
                                                 } else {
                                                     <span class="text-muted">Not configured</span>
+                                                    <button type="button" class="btn btn-link btn-sm p-0 ms-1 versioning-toggle-btn" data-bucket-name={bucket.Name} data-enable="true" title="Enable versioning">Enable</button>
                                                 }
                                             </td>
                                             <td>
@@ -875,6 +878,36 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Handle quota enabled checkbox
         document.getElementById('quotaEnabled').addEventListener('change', function() {
             document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';
+        });
+
+        // Handle versioning toggle on an existing bucket (Refresquito
+        // addition -- see dash.UpdateBucketVersioning)
+        document.querySelectorAll('.versioning-toggle-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+                const enable = this.dataset.enable === 'true';
+                const verb = enable ? 'enable' : 'suspend';
+                if (!confirm(`Are you sure you want to ${verb} versioning on bucket "${bucketName}"?`)) {
+                    return;
+                }
+                fetch(basePath(`/api/s3/buckets/${bucketName}/versioning`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enable })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert('Error updating versioning: ' + data.error);
+                    } else {
+                        location.reload();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error updating versioning: ' + error.message);
+                });
+            });
         });
 
         // Handle owner management

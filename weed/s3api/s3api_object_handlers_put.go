@@ -1457,7 +1457,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	useInvertedFormat := s3a.getVersionIdFormat(bucket, normalizedObject)
 
 	// Generate version ID using the appropriate format
-	versionId = generateVersionId(useInvertedFormat)
+	versionId = GenerateVersionId(useInvertedFormat)
 
 	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s, inverted=%v)", versionId, bucket, object, normalizedObject, useInvertedFormat)
 

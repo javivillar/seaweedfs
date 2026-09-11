@@ -578,7 +578,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// Use full object key (not just entryName) to ensure correct .versions directory is checked
 			normalizedKey := strings.TrimPrefix(*input.Key, "/")
 			useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
-			versionId := generateVersionId(useInvertedFormat)
+			versionId := GenerateVersionId(useInvertedFormat)
 			versionFileName := s3a.getVersionFileName(versionId)
 			versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 

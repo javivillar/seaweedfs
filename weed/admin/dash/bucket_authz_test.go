@@ -45,9 +45,9 @@ func TestBucketAndKeyFromPath(t *testing.T) {
 		{"/some/other/path", "", "", false},
 	}
 	for _, tc := range cases {
-		bucket, key, ok := bucketAndKeyFromPath(tc.in)
+		bucket, key, ok := BucketAndKeyFromPath(tc.in)
 		if ok != tc.wantOk || bucket != tc.wantBucket || key != tc.wantKey {
-			t.Errorf("bucketAndKeyFromPath(%q) = (%q, %q, %v), want (%q, %q, %v)",
+			t.Errorf("BucketAndKeyFromPath(%q) = (%q, %q, %v), want (%q, %q, %v)",
 				tc.in, bucket, key, ok, tc.wantBucket, tc.wantKey, tc.wantOk)
 		}
 	}

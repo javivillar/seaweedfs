@@ -314,7 +314,19 @@ templ FileBrowser(data dash.FileBrowserData) {
 							</div>
 						</div>
 						<input type="hidden" id="uploadPath" name="path" value={ data.CurrentPath }>
-						
+
+						<!-- Object Lock (Refresquito addition): GOVERNANCE mode only for now -->
+						<div class="mb-3 form-check">
+							<input class="form-check-input" type="checkbox" id="uploadLockGovernance" onchange="document.getElementById('uploadRetainUntilGroup').style.display = this.checked ? 'block' : 'none'">
+							<label class="form-check-label" for="uploadLockGovernance">
+								Lock this file (cannot be overwritten or deleted until the date below)
+							</label>
+						</div>
+						<div class="mb-3" id="uploadRetainUntilGroup" style="display: none;">
+							<label for="uploadRetainUntil" class="form-label">Retain until</label>
+							<input type="date" class="form-control" id="uploadRetainUntil" name="retain_until">
+						</div>
+
 						<!-- File List Preview -->
 						<div id="fileListPreview" class="mb-3" style="display: none;">
 							<label class="form-label">Selected Files:</label>
@@ -386,6 +398,12 @@ templ FileBrowser(data dash.FileBrowserData) {
 						deleteFile(path);
 					}, `Are you sure you want to delete "${fileName}"? This action cannot be undone.`);
 					break;
+				case 'restore-version':
+					const versionId = button.getAttribute('data-version-id');
+					if (confirm('Restore this version? The current content will be kept as a version too, so nothing is lost.')) {
+						restoreFileVersion(path, versionId);
+					}
+					break;
 			}
 		});
 		
@@ -412,23 +430,36 @@ templ FileBrowser(data dash.FileBrowserData) {
 	}
 
 	function showFileProperties(path) {
-		// Fetch file properties and show in modal
+		// Fetch file properties, plus version history for files (not directories --
+		// determined after the properties response comes back).
 		fetch((window.__BASE_PATH__ || '') + '/api/files/properties?path=' + encodeURIComponent(path))
 			.then(response => response.json())
 			.then(data => {
 				if (data.error) {
 					showAlert('Error loading file properties: ' + data.error, 'error');
-				} else {
-					displayFileProperties(data);
+					return;
 				}
+				if (data.is_directory) {
+					displayFileProperties(data, []);
+					return;
+				}
+				fetch((window.__BASE_PATH__ || '') + '/api/files/versions?path=' + encodeURIComponent(path))
+					.then(response => response.json())
+					.then(versionsData => {
+						displayFileProperties(data, (versionsData && versionsData.versions) || []);
+					})
+					.catch(error => {
+						console.error('Error fetching version history:', error);
+						displayFileProperties(data, []);
+					});
 			})
 			.catch(error => {
 				console.error('Error fetching file properties:', error);
 				showAlert('Error loading file properties: ' + error.message, 'error');
 			});
 	}
-	
-	function displayFileProperties(data) {
+
+	function displayFileProperties(data, versions) {
 		// Create a comprehensive modal for file properties
 		const modalHtml = '<div class="modal fade" id="filePropertiesModal" tabindex="-1">' +
 			'<div class="modal-dialog modal-lg">' +
@@ -438,7 +469,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
 			'</div>' +
 			'<div class="modal-body">' +
-			createFilePropertiesContent(data) +
+			createFilePropertiesContent(data, versions) +
 			'</div>' +
 			'<div class="modal-footer">' +
 			'<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>' +
@@ -464,7 +495,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 		});
 	}
 	
-	function createFilePropertiesContent(data) {
+	function createFilePropertiesContent(data, versions) {
 		let html = '<div class="row">' +
 			'<div class="col-12">' +
 			'<h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>' +
@@ -574,6 +605,35 @@ templ FileBrowser(data dash.FileBrowserData) {
 				'</div>';
 		}
 		
+		// Add version history if present (Refresquito addition -- see
+		// dash/file_versioning.go; empty for directories or when the
+		// bucket has no versioning enabled)
+		if (versions && versions.length > 0) {
+			html += '<div class="row">' +
+				'<div class="col-12">' +
+				'<h6 class="text-primary"><i class="fas fa-history me-1"></i>Version History</h6>' +
+				'<div class="table-responsive" style="max-height: 200px; overflow-y: auto;">' +
+				'<table class="table table-sm table-striped">' +
+				'<thead><tr><th>Version</th><th>Size</th><th>Date</th><th>Owner</th><th></th></tr></thead>' +
+				'<tbody>';
+
+			versions.forEach(v => {
+				html += '<tr>' +
+					'<td><code class="small">' + escapeHtml(v.version_id.substring(0, 12)) + '&hellip;</code></td>' +
+					'<td>' + formatBytes(v.size || 0) + '</td>' +
+					'<td>' + (v.mod_time ? new Date(v.mod_time).toLocaleString() : 'N/A') + '</td>' +
+					'<td>' + escapeHtml(v.owner_name || 'Unknown') + '</td>' +
+					'<td><button type="button" class="btn btn-outline-primary btn-sm" data-action="restore-version" data-path="' + escapeHtml(data.full_path) + '" data-version-id="' + escapeHtml(v.version_id) + '">Restore</button></td>' +
+					'</tr>';
+			});
+
+			html += '</tbody>' +
+				'</table>' +
+				'</div>' +
+				'</div>' +
+				'</div>';
+		}
+
 		// Add extended attributes if present
 		if (data.extended && Object.keys(data.extended).length > 0) {
 			html += '<div class="row">' +

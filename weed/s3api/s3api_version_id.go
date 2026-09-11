@@ -32,10 +32,10 @@ func isValidVersionID(versionId string) bool {
 	return versionId == "" || s3_constants.IsValidPathSegment(versionId)
 }
 
-// generateVersionId creates a unique version ID
+// GenerateVersionId creates a unique version ID
 // If useInvertedFormat is true, uses inverted timestamps so newer versions sort first
 // If false, uses raw timestamps (old format) for backward compatibility
-func generateVersionId(useInvertedFormat bool) string {
+func GenerateVersionId(useInvertedFormat bool) string {
 	now := time.Now().UnixNano()
 	var timestampHex string
 
@@ -188,5 +188,5 @@ func (s3a *S3ApiServer) getVersionIdFormat(bucket, object string) bool {
 // For new objects, uses inverted format. For existing versioned objects, uses their existing format.
 func (s3a *S3ApiServer) generateVersionIdForObject(bucket, object string) string {
 	useInvertedFormat := s3a.getVersionIdFormat(bucket, object)
-	return generateVersionId(useInvertedFormat)
+	return GenerateVersionId(useInvertedFormat)
 }
